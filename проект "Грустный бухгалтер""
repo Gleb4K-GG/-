@@ -1,0 +1,173 @@
+import smtplib      # Библиотека для отправки почты
+import os           # Библиотека для работы с файлами (проверка пути, проверка наличия базы)
+import json         # Библиотека для сохранения данных (таблиц) в файл
+from email.mime.text import MIMEText          # Модуль для создания текста письма
+from email.mime.multipart import MIMEMultipart # Модуль для создания письма с вложениями
+from email.mime.base import MIMEBase          # Модуль для работы с файлами-вложениями
+from email import encoders                   # Модуль для кодирования файлов
+from tabulate import tabulate                # Библиотека для красивой отрисовки таблиц
+
+# --- БЛОК РАБОТЫ С БАЗОЙ ДАННЫХ (JSON) ---
+# Этот блок отвечает за то, чтобы ваши таблицы не удалялись после закрытия программы.
+DB_FILE = "tables_data.json"
+
+def load_tables():
+    """Загружает таблицы из файла в память программы при старте"""
+    if os.path.exists(DB_FILE):
+        try:
+            with open(DB_FILE, "r", encoding="utf-8") as f:
+                return json.load(f) # Превращает текст из файла в словарь Python
+        except:
+            return {} # Если файл сломан или пуст
+    return {}
+
+def save_tables(data):
+    """Записывает текущие таблицы из памяти в файл на диске"""
+    with open(DB_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=4) # indent=4 делает файл читаемым для человека
+
+# Инициализация: загружаем данные в переменную my_tables один раз при запуске
+my_tables = load_tables()
+
+
+# --- БЛОК ОТПРАВКИ ПОЧТЫ (EMAIL) ---
+# Позволяет отправлять сообщения и файлы через защищенное соединение.
+def send_secure_email():
+    print("\n--- ОТПРАВКА ПИСЬМА ---")
+    service_choice = input("Выберите сервис (1 - Mail.ru, 2 - Gmail): ")
+    # Настройка сервера: Gmail требует ://gmail.com, Mail.ru — smtp.mail.ru
+    smtp_server, smtp_port = ('smtp.mail.ru', 465) if service_choice == '1' else ('://gmail.com', 465)
+
+    sender_email = input("Ваша почта: ")
+    password = input("Пароль приложения: ") # Не обычный пароль, а специальный код из настроек почты!
+    recipient_email = input("Почта получателя: ")
+    subject = input("Тема письма: ")
+    body = input("Текст письма: ")
+    file_path = input("Путь к файлу (нажмите Enter, чтобы пропустить): ")
+
+    # Создаем объект "конверта" письма
+    msg = MIMEMultipart()
+    msg['From'] = sender_email
+    msg['To'] = recipient_email
+    msg['Subject'] = subject
+    msg.attach(MIMEText(body, 'plain')) # Добавляем текст
+
+    # Если указан файл и он существует — прикрепляем его
+    if file_path and os.path.isfile(file_path):
+        try:
+            with open(file_path, "rb") as attachment:
+                part = MIMEBase("application", "octet-stream")
+                part.set_payload(attachment.read())
+            encoders.encode_base64(part) # Шифруем файл для передачи по сети
+            part.add_header("Content-Disposition", f"attachment; filename={os.path.basename(file_path)}")
+            msg.attach(part)
+        except Exception as e:
+            print(f"❌ Ошибка прикрепления файла: {e}")
+
+    # Попытка авторизации и отправки
+    try:
+        with smtplib.SMTP_SSL(smtp_server, smtp_port) as server:
+            server.login(sender_email, password)
+            server.send_message(msg)
+            print("✅ Письмо успешно отправлено!")
+    except Exception as e:
+        print(f"❌ Ошибка отправки: {e}")
+
+
+# --- БЛОК УПРАВЛЕНИЯ ТАБЛИЦАМИ ---
+# Здесь мы создаем, удаляем и просматриваем данные.
+def table_menu():
+    global my_tables
+    while True:
+        print("\n--- МЕНЮ ТАБЛИЦ ---")
+        print("1 - Создать таблицу\n2 - Посмотреть таблицу\n3 - Удалить таблицу\n4 - Назад")
+        choice = input("Выберите действие: ")
+
+        if choice == '1':
+            name = input("Название новой таблицы: ")
+            try:
+                cols = int(input("Сколько будет столбцов? "))
+                headers = [input(f"Заголовок столбца {i + 1}: ") for i in range(cols)]
+                rows = []
+                print("Вводите данные строк. Когда закончите, введите 'стоп'")
+                while True:
+                    data = input(f"Введите данные: ")
+                    if data.lower() == 'стоп': break
+                    rows.append(data.split(',')) # Превращает строку в список ячеек
+
+                my_tables[name] = {"headers": headers, "rows": rows}
+                save_tables(my_tables) # Сразу сохраняем изменения в файл
+                print(f"✅ Таблица '{name}' сохранена!")
+            except ValueError:
+                print("❌ Ошибка: нужно вводить числовое значение столбцов!")
+
+        elif choice == '2':
+            if not my_tables:
+                print("📭 Список таблиц пуст.")
+                continue
+            print("Доступные таблицы:", ", ".join(my_tables.keys()))
+            name = input("Какую таблицу открыть? ")
+            if name in my_tables:
+                # Отрисовка красивой сетки через tabulate
+                print("\n" + tabulate(my_tables[name]["rows"], headers=my_tables[name]["headers"], tablefmt="grid"))
+            else:
+                print("❌ Такой таблицы нет.")
+
+        elif choice == '3':
+            name = input("Введите название таблицы для УДАЛЕНИЯ: ")
+            if name in my_tables:
+                del my_tables[name]
+                save_tables(my_tables) # Обновляем файл после удаления
+                print(f"🗑️ Таблица '{name}' удалена.")
+            else:
+                print("❌ Нечего удалять.")
+
+        elif choice == '4':
+            break
+
+
+# --- ГЛАВНОЕ МЕНЮ (ЯДРО ПРОГРАММЫ) ---
+# Это бесконечный цикл, который связывает все модули вместе.
+while True:
+    print('\n=======================')
+    print('ГЛАВНОЕ МЕНЮ:')
+    print("1 - Открыть калькулятор")
+    print("2 - Работа с таблицами")
+    print("3 - Отправить Email")
+    print("0 - Выход из программы")
+    print('=======================')
+
+    main_choice = input("Выберите действие: ")
+
+    if main_choice == '0':
+        print("Завершение работы... До свидания!")
+        break
+
+    elif main_choice == '1':
+        # Подменю калькулятора
+        while True:
+            print("\n--- КАЛЬКУЛЯТОР ---")
+            print("1 - Сложение\n2 - Вычитание\n3 - Умножение\n4 - Деление\n5 - Назад")
+            b = input("Действие: ")
+            if b == '5': break
+            if b not in '1234': continue
+            try:
+                n1 = float(input("Первое число: "))
+                n2 = float(input("Второе число: "))
+                if b == '1': print(f"👉 Результат: {n1 + n2}")
+                elif b == '2': print(f"👉 Результат: {n1 - n2}")
+                elif b == '3': print(f"👉 Результат: {n1 * n2}")
+                elif b == '4':
+                    # Защита от критической ошибки деления на ноль
+                    print(f"👉 Результат: {n1 / n2}" if n2 != 0 else "❌ Ошибка: на ноль делить нельзя!")
+            except ValueError:
+                print("❌ Ошибка: нужно вводить только числа!")
+
+    elif main_choice == '2':
+        table_menu() # Переход в функции таблиц
+
+    elif main_choice == '3':
+        send_secure_email() # Переход в модуль почты
+
+    else:
+        print("⚠️ Неверный выбор. Попробуйте еще раз.")
